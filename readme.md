@@ -176,7 +176,7 @@ And this shows the json response for the posts that are only for this user.
 
 Now another powerful use case of JWT authentication is that you can use them across different servers in the app.
 
-So, in the package.json, we can add another script to run a new devServer.js, and make it listen on another port
+So, in the package.json, we can add another script to run a new authServer.js, and make it listen on another port
 say, 4000.
 
 so we run it, and we have teo different servers on out web app.
@@ -200,8 +200,106 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiV2FsZSIsI
 ```
 
 This is something you can do very well when you do session based authentication. So in JWT, the authenticaton is tied to the token, so if you can share the token accross multiple servers, you can use the authentication accross them.
+
 ***************************************************************************************
+
+So with that known, we can isolate our authentication on one server, and let other reequests come from other servers. However, we also setup refresh tokens the authentication server handles creating and deleting the refresh tokens.
+
+So we can remove all post routes design and post related codes from the authServer.js file
+All will be on that file now will only be our login, logout and refresh totens.
+
 ***************************************************************************************
+
+But why do we need refresh tokens?
+Since we are now sharing tokens across multiple servers, it is now more vulnerable to attacks, as multiple people may now have acess to it.
+
+So we should set an expiration date to the main tokens, which the refresh tokens will then be used to reissue another token on new request.
+
+So the refresh token is saved in a saved file, and then the normal access token then have an expiry date, which unauthorizes the user, maybe after some minutes, and then the user must use the refresh token to reissue another token. So if someone even has access to your access toekn, they only have access to your account for a few minutes, and then it expires mandating a reissue by the refresh token.
+
+But another issue can be someone stealing the refresh token to reacreate another access token. So that is why the concept of invalidating a refresh token is.
+So that is why we create a logout route, that delets the refresh token from the lists of valid refrehs tokens, and invalidates it, so someone else dosent try to use it to access the resource/account.
+
+
 ***************************************************************************************
+
+So lets create a function that creates an access token for us that expires.
+
+so the function generateAccessToken **takes the user object** we want to generate for. 
+The code is dsimilar to the access token, but it takes a third argument, i.e the expiry date
+
+```js
+function generateAccessToken(user){
+    return jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expires: '15s' })
+}
+```
+
+we can then use this function in our login route, and after it also design a refreshToken that is signed withe the user
+
+```js
+
+let refreshTokens = []
+
+app.post('/login', (req, res) => {
+    const username = req.body.username
+    const user = {user: username}
+
+    const accessToken = generateAccessToken(user)
+    const refreshToken = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET)
+    refreshTokens.pudh(refreshToken)
+
+    //then return the access and refresh token to the user
+
+    return({accessToken: accessToken, refreshToken: refreshToken});
+
+})
+```
+
 ***************************************************************************************
+
+Now that we have generated and returned both token to the user, the access token in the post route will work as long as the the expiry, i.e 15s
+
+
+```js
+//remeber that the authenticatToken function is still passed as a middle ware in the post route, so it still get authenticated even if it gets here
+app.get('/posts', authenticateToken, (req, res) => {
+
+    res.json(posts.filter(posts => posts.username === req.user.name))
+})
+```
+
+***************************************************************************************
+
+now, we need to be able to reissue the refreshToken. 
+So we can create a route that reissues the access token, using the refreshtoken.
+Remeber the refresh token never expires, untill logout. But the access token expires after 15 secs. So if the client comes back to access the result, we quickly reissue another access token by chekcing if their refresh token is valid and usign it to generate another access token.
+
+You want to ask, then where is all the refreshTokens stored.
+
+It is stored in the database.
+
+```js
+app.post('token', (req, res) => {
+        const refreshToken = req.body.token
+        if(refreshToken == null) return res.sendStatus(402)
+        if(refreshTokens.includes(refreshToken)) return res.sendStatus(403)
+        jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, (err, user) => {
+        if (err) return res.sendStatus(403)
+        const accessToken = generateAccessToken({ name: user.name})
+        res.json({ accessToken: accessToken})
+    })
+})
+```
+
+***************************************************************************************
+
+And finally delete the refresh token on logout
+
+```js
+app.delete('/logout', (req, res) => {
+    const refreshToken = req.body.refreshToken
+    refreshTokens = refreshTokens.filter(token => token !== refreshToken)
+    res.sendStatus(204)
+})
+```
 ***************************************************************************************
